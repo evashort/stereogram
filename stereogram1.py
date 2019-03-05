@@ -31,7 +31,7 @@ def getLPhases(shifts, center):
     rPhases = getRPhases(shifts[:, ::-1], shifts.shape[1] - 1 - center)
     return -rPhases[:, ::-1]
 
-shifts = np.mean(imread("zmap1.png").astype(float), axis=2) * -4 / 255 + 62
+shifts = np.mean(imread("zmap2.png").astype(float), axis=2) * -4 / 255 + 62
 height, zWidth = shifts.shape
 zCenter = zWidth // 2
 centerRadii = np.round(shifts[:, zCenter] * 0.5).astype(int)
@@ -60,5 +60,5 @@ yIndices = np.mod(np.arange(height), patternHeight)[:, None]
 lGram = pattern[yIndices, lxIndices]
 rGram = pattern[yIndices, uxIndices]
 gram = lerp(lGram, rGram, xIndexPhases[:, :, None])
-imsave("gram1.png", np.round(gram).astype(np.uint8))
+imsave("gram2.png", np.round(gram).astype(np.uint8))
 # imsave("phases1.png", np.round((phases - np.min(phases)) / (np.max(phases) - np.min(phases)) * 255).astype(np.uint8))
