@@ -1,0 +1,23 @@
+x1 p1 x2 p2
+p2(x - x1) + p1(x2 - x) = p
+(p2 - p1)x + p1x2 - p2x1 = p
+x = (p + p2x1 - p1x2) / (p2 - p1)
+
+
+
+p2(1 + dx) - p1dx = p
+p2 + (p2 - p1)dx = p
+dx = (p - p2) / (p2 - p1)
+
+x = (1 - a)x1 + ax2
+
+p2((1 - a)x1 + ax2 - x1) + p1(x2 - (1 - a)x1 - ax2) = p
+p2x1 - p2ax1 + p2ax2 - p2x1 + p1x2 - p1x1 + p1ax1 - p1ax2 = p
+a(-p2x1 + p2x2 + p1x1 - p1x2) + p2x1 - p2x1 + p1x2 - p1x1 = p
+a(-p2x1 + p2x2 + p1x1 - p1x2) = p - p1x2 + p1x1
+a(p2(x2 - x1) - p1(x2 - x1)) = p - p1(x2 - x1)
+a(p2 - p1) = p - p1
+a = (p - p1) / (p2 - p1)
+
+a = (p2 - p) / (p2 - p1)
+b = (p - p1) / (p2 - p1)
