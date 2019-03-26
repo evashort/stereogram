@@ -1,6 +1,7 @@
 from imageio import imread, imsave
 from itertools import islice, product
 import numpy as np
+import OpenEXR # non-Windows: pip install openexr; Windows: https://www.lfd.uci.edu/~gohlke/pythonlibs/#openexr
 
 def assertEqual(a, b, threshold=1e-6, limit=3):
     a, b = np.broadcast_arrays(a, b)
@@ -131,12 +132,33 @@ assert np.all(
         [[False, True], [True, False]]
 )
 
-testCase = 2
+def readDepthFile(path):
+    depthFile = OpenEXR.InputFile(str(path))
+    header = depthFile.header()
+    zChannel = header["channels"]["Z"]
+    assert zChannel.type.v == 2 # float32
+    assert (zChannel.xSampling, zChannel.ySampling) == (1, 1)
+    viewBox = header["dataWindow"]
+    width = viewBox.max.x - viewBox.min.x + 1
+    height = viewBox.max.y - viewBox.min.y + 1
+    buffer = depthFile.channel("Z")
+    assert len(buffer) == height * width * np.dtype(np.float32).itemsize
+    depthMap = np.frombuffer(buffer, dtype=np.float32).reshape(
+        (height, width)
+    )
+    #imsave(str(path) + ".png", np.round((depthMap - np.max(depthMap)) / (np.min(depthMap) - np.max(depthMap)) * 255).astype(np.uint8))
+    return depthMap
 
-radii = np.mean(
-    imread("zmap{}.png".format(testCase)).astype(float),
-    axis=2
-) * -2 / 255 + 31
+def adjustRange(a, old1, old2, new1, new2, out=None):
+    factor = (new2 - new1) / (old2 - old1)
+    out = np.multiply(a, factor, out=out)
+    out += new1 - old1 * factor
+    return out
+
+testCase = 4
+
+radii = readDepthFile("zmap{}.exr".format(testCase))
+radii = adjustRange(radii, np.min(radii), np.max(radii), 58, 62)
 height, cWidth = radii.shape
 
 cOrigin = 0.5 * (cWidth - 1)
