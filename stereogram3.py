@@ -146,7 +146,7 @@ def readDepthFile(path):
     depthMap = np.frombuffer(buffer, dtype=np.float32).reshape(
         (height, width)
     )
-    #imsave(str(path) + ".png", np.round((depthMap - np.max(depthMap)) / (np.min(depthMap) - np.max(depthMap)) * 255).astype(np.uint8))
+    imsave(str(path) + ".png", np.round((depthMap - np.max(depthMap)) / (np.min(depthMap) - np.max(depthMap)) * 255).astype(np.uint8))
     return depthMap
 
 def adjustRange(a, old1, old2, new1, new2, out=None):
@@ -158,7 +158,7 @@ def adjustRange(a, old1, old2, new1, new2, out=None):
 testCase = 4
 
 radii = readDepthFile("zmap{}.exr".format(testCase)).astype(float)
-adjustRange(radii, np.min(radii), np.max(radii), 58, 62, out=radii)
+adjustRange(radii, np.min(radii), np.max(radii), 116, 124, out=radii)
 height, cWidth = radii.shape
 
 cOrigin = 0.5 * (cWidth - 1)
@@ -210,9 +210,9 @@ print("{}/{}".format(lIterations, expectedIterations))
 
 imsave("xMap{}.png".format(testCase), np.round((xMap - np.min(xMap)) / (np.max(xMap) - np.min(xMap)) * 255).astype(np.uint8))
 
-pattern = imread("pattern1.png").astype(float)
+pattern = imread("pattern2.jpg").astype(float)
 pillar = pattern[np.arange(height) % pattern.shape[0]]
 pillarChannels = np.moveaxis(pillar, 2, 0)
-gramChannels = useTiledMap(pillarChannels, xMap)
+gramChannels = useTiledMap(pillarChannels, xMap + 0.5 * pillar.shape[1])
 gram = np.moveaxis(gramChannels, 0, 2)
 imsave("gram{}.png".format(testCase), np.round(gram).astype(np.uint8))
