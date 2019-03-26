@@ -157,8 +157,8 @@ def adjustRange(a, old1, old2, new1, new2, out=None):
 
 testCase = 4
 
-radii = readDepthFile("zmap{}.exr".format(testCase))
-radii = adjustRange(radii, np.min(radii), np.max(radii), 58, 62)
+radii = readDepthFile("zmap{}.exr".format(testCase)).astype(float)
+adjustRange(radii, np.min(radii), np.max(radii), 58, 62, out=radii)
 height, cWidth = radii.shape
 
 cOrigin = 0.5 * (cWidth - 1)
@@ -176,7 +176,7 @@ np.minimum.accumulate( # pylint: disable=no-member
 xStop = int(np.ceil(np.min(crMap[:, -1])))
 
 xMap = np.broadcast_to(
-    np.arange(xStart, xStop),
+    np.arange(xStart, xStop, dtype=float),
     (height, xStop - xStart)
 ).copy()
 lxMap = xMap[:, :xOrigin]
