@@ -83,7 +83,9 @@ assertEqual(
 )
 
 def useMap(abMap, a):
+    a = np.clip(a, 0, abMap.shape[-1] - 1)
     ai = np.floor(a)
+    np.minimum(ai, abMap.shape[-1] - 2, out=ai)
     aj = ai + 1
     bi = multiGet(abMap, ai.astype(int))
     bj = multiGet(abMap, aj.astype(int))
@@ -97,8 +99,9 @@ def useTiledMap(abMap, a):
     return bi * (aj - a) + bj * (a - ai)
 
 def unmap(abMap, b):
+    b = np.clip(b, abMap[..., :1], abMap[..., -1:])
     aj = searchsorted(abMap, b, side="right")
-    assert np.all(aj > 0)
+    np.minimum(aj, abMap.shape[-1] - 1, out=aj)
     ai = aj - 1
     bi, bj = multiGet(abMap, ai), multiGet(abMap, aj)
     return (ai * (bj - b) + aj * (b - bi)) / (bj - bi)
@@ -113,14 +116,22 @@ assertEqual(
     [0.9, 1.9, 2.9]
 )
 assert unmap(np.array([0, 1, 1, 2]), 1) == 2
+assertEqual(useMap(np.array([0, 1]), [-1, 3]), [0, 1])
+assertEqual(unmap(np.array([0, 1]), [-1, 3]), [0, 1])
 assertEqual(
-    useMap([[0, 1], [2, 3]], [[0.1], [0.9]]),
+    useMap(np.array([[0, 1], [2, 3]]), [[0.1], [0.9]]),
     [[0.1], [2.9]]
 )
 assertEqual(
-    unmap([[0, 1], [2, 3]], [[0.1], [2.9]]),
+    unmap(np.array([[0, 1], [2, 3]]), [[0.1], [2.9]]),
     [[0.1], [0.9]]
 )
+
+def getIntRange(abMap):
+    return (
+        int(np.ceil(np.max(abMap[..., 0]))),
+        int(np.ceil(np.min(abMap[..., -1]))) - 1
+    )
 
 def isIncreasing(curve, testPoints):
     testIndices = np.floor(testPoints).astype(int)
@@ -132,22 +143,37 @@ assert np.all(
         [[False, True], [True, False]]
 )
 
-def readDepthFile(path):
+def readDepthFile(path, channelNames="RGBZ"):
     depthFile = OpenEXR.InputFile(str(path))
     header = depthFile.header()
-    zChannel = header["channels"]["Z"]
-    assert zChannel.type.v == 2 # float32
-    assert (zChannel.xSampling, zChannel.ySampling) == (1, 1)
+    for channelName in channelNames:
+        channelHeader = header["channels"][channelName]
+        assert channelHeader.type.v == 2 # float32
+        assert (channelHeader.xSampling, channelHeader.ySampling) == (1, 1)
+
     viewBox = header["dataWindow"]
     width = viewBox.max.x - viewBox.min.x + 1
     height = viewBox.max.y - viewBox.min.y + 1
-    buffer = depthFile.channel("Z")
-    assert len(buffer) == height * width * np.dtype(np.float32).itemsize
-    depthMap = np.frombuffer(buffer, dtype=np.float32).reshape(
-        (height, width)
-    )
-    imsave(str(path) + ".png", np.round((depthMap - np.max(depthMap)) / (np.min(depthMap) - np.max(depthMap)) * 255).astype(np.uint8))
-    return depthMap
+
+    channels = np.empty((len(channelNames), height, width))
+    for i, channelName in enumerate(channelNames):
+        buffer = depthFile.channel(channelName)
+        assert len(buffer) == height * width * np.dtype(np.float32).itemsize
+        channels[i] = np.frombuffer(buffer, dtype=np.float32).reshape(
+            (height, width)
+        )
+
+    if channelNames[:3] == "RGB":
+        image = np.moveaxis(channels[:3], 0, 2)
+        image *= 0.8
+        image **= 0.5
+        imsave(str(path) + ".png", np.round(np.clip(image, 0, 1) * 255).astype(np.uint8))
+    
+    if channelNames[-1] == "Z":
+        depthMap = channels[-1]
+        imsave(str(path) + ".z.png", np.round((depthMap - np.max(depthMap)) / (np.min(depthMap) - np.max(depthMap)) * 255).astype(np.uint8))
+
+    return channels
 
 def adjustRange(a, old1, old2, new1, new2, out=None):
     factor = (new2 - new1) / (old2 - old1)
@@ -155,10 +181,12 @@ def adjustRange(a, old1, old2, new1, new2, out=None):
     out += new1 - old1 * factor
     return out
 
-testCase = 4
+testCase = 5
 
-radii = readDepthFile("zmap{}.exr".format(testCase)).astype(float)
-adjustRange(radii, np.min(radii), np.max(radii), 116, 124, out=radii)
+channels = readDepthFile("zmap{}.exr".format(testCase)).astype(float)
+cImage = channels[:3]
+radii = channels[-1]
+adjustRange(radii, np.min(radii), np.max(radii), 112, 124, out=radii)
 height, cWidth = radii.shape
 
 cOrigin = 0.5 * (cWidth - 1)
@@ -166,53 +194,57 @@ cxMap = np.arange(cWidth) - cOrigin
 
 clMap = cxMap - radii
 np.maximum.accumulate(clMap, axis=1, out=clMap) # pylint: disable=no-member
-xStart = int(np.ceil(np.max(clMap[:, 0])))
-xOrigin = -xStart
+lxStart, lxStop = getIntRange(clMap)
+lxMap = np.broadcast_to(
+    np.arange(lxStart, lxStop, dtype=float),
+    (height, lxStop - lxStart)
+).copy()
+lImage = np.zeros((len(cImage),) + lxMap.shape)
 
 crMap = cxMap + radii
 np.minimum.accumulate( # pylint: disable=no-member
     crMap[:, ::-1], axis=1, out=crMap[:, ::-1]
 )
-xStop = int(np.ceil(np.min(crMap[:, -1])))
-
-xMap = np.broadcast_to(
-    np.arange(xStart, xStop, dtype=float),
-    (height, xStop - xStart)
+rxStart, rxStop = getIntRange(crMap)
+rxMap = np.broadcast_to(
+    np.arange(rxStart, rxStop, dtype=float),
+    (height, rxStop - rxStart)
 ).copy()
-lxMap = xMap[:, :xOrigin]
-rxMap = xMap[:, xOrigin + 1:]
+rImage = np.zeros((len(cImage),) + rxMap.shape)
 
-expectedIterations = 0.5 * cWidth / (2 * np.mean(radii))
+GHOSTFACTOR = 0.7
+def getScale(iterations):
+    global GHOSTFACTOR
+    return GHOSTFACTOR ** iterations
 
-rIterations = 0
-while True:
-    rcMap = unmap(crMap, rxMap)
-    rlMap = useMap(clMap, rcMap)
-    mask = np.logical_and(rcMap > cOrigin, isIncreasing(clMap, rcMap))
-    if not np.any(mask):
-        break
-    rxMap[mask] = rlMap[mask]
-    rIterations += 1
+def getMagnitude(iterations):
+    global GHOSTFACTOR
+    if GHOSTFACTOR == 1:
+        return iterations
+    return (1 - GHOSTFACTOR ** iterations) / (1 - GHOSTFACTOR)
 
-print("{}/{}".format(rIterations, expectedIterations))
-
-lIterations = 0
-while True:
+iterations = 8
+for i in range(iterations):
     lcMap = unmap(clMap, lxMap)
-    lrMap = useMap(crMap, lcMap)
-    mask = np.logical_and(lcMap < cOrigin, isIncreasing(crMap, lcMap))
-    if not np.any(mask):
-        break
-    lxMap[mask] = lrMap[mask]
-    lIterations += 1
+    lImage += getScale(i) * np.where(
+        lxMap < clMap[..., -1:],
+        useMap(cImage, lcMap),
+        lImage / max(1, getMagnitude(i))
+    )
+    lxMap = useMap(crMap, lcMap)
 
-print("{}/{}".format(lIterations, expectedIterations))
+for i in range(iterations):
+    rcMap = unmap(crMap, rxMap)
+    rImage += getScale(i) * np.where(
+        rxMap >= crMap[..., :1],
+        useMap(cImage, rcMap),
+        rImage / max(1, getMagnitude(i))
+    )
+    rxMap = useMap(clMap, rcMap)
 
-imsave("xMap{}.png".format(testCase), np.round((xMap - np.min(xMap)) / (np.max(xMap) - np.min(xMap)) * 255).astype(np.uint8))
-
-pattern = imread("pattern2.jpg").astype(float)
-pillar = pattern[np.arange(height) % pattern.shape[0]]
-pillarChannels = np.moveaxis(pillar, 2, 0)
-gramChannels = useTiledMap(pillarChannels, xMap + 0.5 * pillar.shape[1])
-gram = np.moveaxis(gramChannels, 0, 2)
-imsave("gram{}.png".format(testCase), np.round(gram).astype(np.uint8))
+xImage = np.zeros((len(cImage), height, rxStop - lxStart))
+xImage[..., :lxStop - lxStart] += lImage
+xImage[..., rxStart - lxStart:] += rImage
+xImage /= getMagnitude(iterations)
+xImage[..., rxStart - lxStart:lxStop - lxStart] *= 0.5
+imsave("gram{}.png".format(testCase), np.round(np.clip(np.moveaxis(xImage, 0, 2), 0, 1) * 255).astype(np.uint8))
