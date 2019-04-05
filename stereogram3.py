@@ -2,6 +2,7 @@ from imageio import imread, imsave
 from itertools import islice, product
 import numpy as np
 import OpenEXR # non-Windows: pip install openexr; Windows: https://www.lfd.uci.edu/~gohlke/pythonlibs/#openexr
+import skimage # pip install scikit-image
 
 def assertEqual(a, b, threshold=1e-6, limit=3):
     a, b = np.broadcast_arrays(a, b)
@@ -184,67 +185,73 @@ def adjustRange(a, old1, old2, new1, new2, out=None):
 testCase = 5
 
 channels = readDepthFile("zmap{}.exr".format(testCase)).astype(float)
+_, height, cWidth = channels.shape
+height //= 2
+cWidth //= 2
+unit = np.sqrt(height * cWidth) / 10
+print(unit)
+channels = np.moveaxis(
+    skimage.transform.resize(
+        np.moveaxis(channels, 0, 2),
+        (height, cWidth)
+    ), 2, 0
+)
 cImage = channels[:3]
 radii = channels[-1]
-adjustRange(radii, np.min(radii), np.max(radii), 112, 124, out=radii)
-height, cWidth = radii.shape
+adjustRange(radii, np.min(radii), np.max(radii), 0.726 * unit, 0.804 * unit, out=radii)
 
 cOrigin = 0.5 * (cWidth - 1)
 cxMap = np.arange(cWidth) - cOrigin
 
 clMap = cxMap - radii
 np.maximum.accumulate(clMap, axis=1, out=clMap) # pylint: disable=no-member
-lxStart, lxStop = getIntRange(clMap)
-lxMap = np.broadcast_to(
-    np.arange(lxStart, lxStop, dtype=float),
-    (height, lxStop - lxStart)
-).copy()
-lImage = np.zeros((len(cImage),) + lxMap.shape)
+xStart, _ = getIntRange(clMap)
 
 crMap = cxMap + radii
 np.minimum.accumulate( # pylint: disable=no-member
     crMap[:, ::-1], axis=1, out=crMap[:, ::-1]
 )
-rxStart, rxStop = getIntRange(crMap)
-rxMap = np.broadcast_to(
-    np.arange(rxStart, rxStop, dtype=float),
-    (height, rxStop - rxStart)
-).copy()
-rImage = np.zeros((len(cImage),) + rxMap.shape)
+_, xStop = getIntRange(crMap)
+
+width = xStop - xStart
 
 GHOSTFACTOR = 0.7
-def getScale(iterations):
-    global GHOSTFACTOR
-    return GHOSTFACTOR ** iterations
 
-def getMagnitude(iterations):
-    global GHOSTFACTOR
-    if GHOSTFACTOR == 1:
-        return iterations
-    return (1 - GHOSTFACTOR ** iterations) / (1 - GHOSTFACTOR)
+magnitudes = np.zeros((height, width))
 
 iterations = 8
-for i in range(iterations):
-    lcMap = unmap(clMap, lxMap)
-    lImage += getScale(i) * np.where(
-        lxMap < clMap[..., -1:],
-        useMap(cImage, lcMap),
-        lImage / max(1, getMagnitude(i))
-    )
-    lxMap = useMap(crMap, lcMap)
+layerCount = 2 * iterations
+layers = np.empty((cImage.shape[0], layerCount, height, width))
+layerWeights = np.empty(layerCount)
 
-for i in range(iterations):
-    rcMap = unmap(crMap, rxMap)
-    rImage += getScale(i) * np.where(
-        rxMap >= crMap[..., :1],
-        useMap(cImage, rcMap),
-        rImage / max(1, getMagnitude(i))
-    )
-    rxMap = useMap(clMap, rcMap)
+lLayers = layers[:, iterations - 1::-1]
+lLayerWeights = layerWeights[iterations - 1::-1]
+lLayerWeights[:] = np.power(GHOSTFACTOR, np.arange(iterations))
 
-xImage = np.zeros((len(cImage), height, rxStop - lxStart))
-xImage[..., :lxStop - lxStart] += lImage
-xImage[..., rxStart - lxStart:] += rImage
-xImage /= getMagnitude(iterations)
-xImage[..., rxStart - lxStart:lxStop - lxStart] *= 0.5
-imsave("gram{}.png".format(testCase), np.round(np.clip(np.moveaxis(xImage, 0, 2), 0, 1) * 255).astype(np.uint8))
+xMap = np.empty((height, width))
+xMap[:] = np.arange(xStart, xStop, dtype=float)
+for i in range(iterations):
+    xcMap = unmap(clMap, xMap)
+    lLayers[:, i] = useMap(cImage, xcMap)
+    mask = xMap < clMap[..., -1:]
+    lLayers[:, i] *= mask
+    magnitudes += mask * lLayerWeights[i]
+    xMap = useMap(crMap, xcMap)
+
+rLayers = layers[:, iterations:]
+rLayerWeights = layerWeights[iterations:]
+rLayerWeights[:] = np.power(GHOSTFACTOR, np.arange(iterations))
+
+xMap[:] = np.arange(xStart, xStop, dtype=float)
+for i in range(iterations):
+    xcMap = unmap(crMap, xMap)
+    rLayers[:, i] = useMap(cImage, xcMap)
+    mask = xMap >= crMap[..., :1]
+    rLayers[:, i] *= mask
+    magnitudes += mask * rLayerWeights[i]
+    xMap = useMap(clMap, xcMap)
+
+layers *= layerWeights[:, None, None]
+merged = np.sum(layers, axis=1)
+merged /= magnitudes
+imsave("gram{}.png".format(testCase), np.round(np.clip(np.moveaxis(merged, 0, 2), 0, 1) * 255).astype(np.uint8))

@@ -35,3 +35,4 @@ c = im[:, 2 * shift:-shift]
 d = im[:, 3 * shift:]
 result = 0.75 * (b + c) - 0.25 * (a + d)
 imsave("colortest5.png", np.round(np.clip(result, 0, 1) * 255).astype(np.uint8))
+imsave("colorcontrol5.png", np.round(0.5 * (b + c) * 255).astype(np.uint8))
