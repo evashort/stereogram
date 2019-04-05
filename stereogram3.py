@@ -183,6 +183,14 @@ def adjustRange(a, old1, old2, new1, new2, out=None):
     out += new1 - old1 * factor
     return out
 
+def getGaussian(length, sigmasInFrame=3):
+    x = np.linspace(-sigmasInFrame, sigmasInFrame, length, endpoint = True)
+    np.square(x, out = x)
+    x *= -0.5
+    np.exp(x, out = x)
+    x *= sigmasInFrame / (0.5 * length * np.sqrt(2 * np.pi))
+    return x
+
 testCase = 5
 
 channels = readDepthFile("zmap{}.exr".format(testCase)).astype(float)
@@ -217,12 +225,14 @@ width = xStop - xStart
 xMap = np.empty((height, width))
 
 cImage = channels[:3]
+np.clip(cImage, 0, 1, out=cImage)
 cBlurred = np.empty_like(cImage)
 for channel, blurredChannel in zip(cImage, cBlurred):
     ndimage.filters.gaussian_filter(
-        channel, sigma=0.02 * unit, output=blurredChannel
+        channel, sigma=0.05 * unit, output=blurredChannel
     )
 cImage -= cBlurred
+adjustRange(cBlurred, 0, 1, 0.15, 0.8, out=cBlurred)
 
 bcImage = np.zeros((cImage.shape[0], height, width))
 bcMagnitudes = np.zeros((height, width))
@@ -258,6 +268,7 @@ imsave("blurred{}.png".format(testCase), np.round(np.clip(np.moveaxis(blurred, 0
 
 cScores = np.mean(cImage, axis=0)
 cScores *= cScores
+cScores *= getGaussian(cWidth, sigmasInFrame=1.5)
 cScores = ndimage.filters.gaussian_filter(cScores, sigma=0.13 * unit)
 np.power(cScores, 10, out=cScores)
 
