@@ -224,30 +224,24 @@ for channel, blurredChannel in zip(cImage, cBlurred):
 cImage -= cBlurred
 
 layerCount = 2
-layers = np.empty((cImage.shape[0], layerCount, height, width))
+blurred = np.zeros((cImage.shape[0], height, width))
 magnitudes = np.zeros((height, width))
 xMap = np.empty((height, width))
 
 xMap[:] = np.arange(xStart, xStop, dtype=float)
 mask = xMap < clMap[..., -1:]
 xMap = unmap(clMap, xMap)
-layers[:, 0] = useMap(cBlurred, xMap)
-layers[:, 0] *= mask
+blurred += useMap(cBlurred, xMap) * mask
 magnitudes += mask
 
 xMap[:] = np.arange(xStart, xStop, dtype=float)
 mask = xMap >= crMap[..., :1]
 xMap = unmap(crMap, xMap)
-layers[:, 1] = useMap(cBlurred, xMap)
-layers[:, 1] *= mask
+blurred += useMap(cBlurred, xMap) * mask
 magnitudes += mask
 
-blurred = np.sum(layers, axis=1)
 blurred /= magnitudes
 imsave("blurred{}.png".format(testCase), np.round(np.clip(np.moveaxis(blurred, 0, 2), 0, 1) * 255).astype(np.uint8))
-
-GHOSTFACTOR = 0.7
-
 
 cScores = np.mean(cImage, axis=0)
 cScores *= cScores
@@ -258,33 +252,28 @@ magnitudes = np.zeros((height, width))
 
 iterations = 8
 layerCount = 2 * iterations
-layers = np.empty((cImage.shape[0], layerCount, height, width))
+merged = np.zeros((cImage.shape[0], height, width))
 
-lLayers = layers[:, iterations - 1::-1]
 xMap[:] = np.arange(xStart, xStop, dtype=float)
 for i in range(iterations):
     mask = xMap < clMap[..., -1:]
     xMap = unmap(clMap, xMap)
     weights = useMap(cScores, xMap)
     weights *= mask
-    lLayers[:, i] = useMap(cImage, xMap)
-    lLayers[:, i] *= weights
+    merged += useMap(cImage, xMap) * weights
     magnitudes += weights
     xMap = useMap(crMap, xMap)
 
-rLayers = layers[:, iterations:]
 xMap[:] = np.arange(xStart, xStop, dtype=float)
 for i in range(iterations):
     mask = xMap >= crMap[..., :1]
     xMap = unmap(crMap, xMap)
     weights = useMap(cScores, xMap)
     weights *= mask
-    rLayers[:, i] = useMap(cImage, xMap)
-    rLayers[:, i] *= weights
+    merged += useMap(cImage, xMap) * weights
     magnitudes += weights
     xMap = useMap(clMap, xMap)
 
-merged = np.sum(layers, axis=1)
 merged /= magnitudes
 merged += blurred
 imsave("gram{}.png".format(testCase), np.round(np.clip(np.moveaxis(merged, 0, 2), 0, 1) * 255).astype(np.uint8))
