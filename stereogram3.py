@@ -1,5 +1,6 @@
 from imageio import imread, imsave
 from itertools import islice, product
+from scipy import ndimage
 import numpy as np
 import OpenEXR # non-Windows: pip install openexr; Windows: https://www.lfd.uci.edu/~gohlke/pythonlibs/#openexr
 import skimage # pip install scikit-image
@@ -196,7 +197,6 @@ channels = np.moveaxis(
         (height, cWidth)
     ), 2, 0
 )
-cImage = channels[:3]
 radii = channels[-1]
 adjustRange(radii, np.min(radii), np.max(radii), 0.726 * unit, 0.804 * unit, out=radii)
 
@@ -215,43 +215,76 @@ _, xStop = getIntRange(crMap)
 
 width = xStop - xStart
 
+cImage = channels[:3]
+cBlurred = np.empty_like(cImage)
+for channel, blurredChannel in zip(cImage, cBlurred):
+    ndimage.filters.gaussian_filter(
+        channel, sigma=0.02 * unit, output=blurredChannel
+    )
+cImage -= cBlurred
+
+layerCount = 2
+layers = np.empty((cImage.shape[0], layerCount, height, width))
+magnitudes = np.zeros((height, width))
+xMap = np.empty((height, width))
+
+xMap[:] = np.arange(xStart, xStop, dtype=float)
+mask = xMap < clMap[..., -1:]
+xMap = unmap(clMap, xMap)
+layers[:, 0] = useMap(cBlurred, xMap)
+layers[:, 0] *= mask
+magnitudes += mask
+
+xMap[:] = np.arange(xStart, xStop, dtype=float)
+mask = xMap >= crMap[..., :1]
+xMap = unmap(crMap, xMap)
+layers[:, 1] = useMap(cBlurred, xMap)
+layers[:, 1] *= mask
+magnitudes += mask
+
+blurred = np.sum(layers, axis=1)
+blurred /= magnitudes
+imsave("blurred{}.png".format(testCase), np.round(np.clip(np.moveaxis(blurred, 0, 2), 0, 1) * 255).astype(np.uint8))
+
 GHOSTFACTOR = 0.7
+
+
+cScores = np.mean(cImage, axis=0)
+cScores *= cScores
+cScores = ndimage.filters.gaussian_filter(cScores, sigma=0.13 * unit)
+np.power(cScores, 10, out=cScores)
 
 magnitudes = np.zeros((height, width))
 
 iterations = 8
 layerCount = 2 * iterations
 layers = np.empty((cImage.shape[0], layerCount, height, width))
-layerWeights = np.empty(layerCount)
 
 lLayers = layers[:, iterations - 1::-1]
-lLayerWeights = layerWeights[iterations - 1::-1]
-lLayerWeights[:] = np.power(GHOSTFACTOR, np.arange(iterations))
-
-xMap = np.empty((height, width))
 xMap[:] = np.arange(xStart, xStop, dtype=float)
 for i in range(iterations):
-    xcMap = unmap(clMap, xMap)
-    lLayers[:, i] = useMap(cImage, xcMap)
     mask = xMap < clMap[..., -1:]
-    lLayers[:, i] *= mask
-    magnitudes += mask * lLayerWeights[i]
-    xMap = useMap(crMap, xcMap)
+    xMap = unmap(clMap, xMap)
+    weights = useMap(cScores, xMap)
+    weights *= mask
+    lLayers[:, i] = useMap(cImage, xMap)
+    lLayers[:, i] *= weights
+    magnitudes += weights
+    xMap = useMap(crMap, xMap)
 
 rLayers = layers[:, iterations:]
-rLayerWeights = layerWeights[iterations:]
-rLayerWeights[:] = np.power(GHOSTFACTOR, np.arange(iterations))
-
 xMap[:] = np.arange(xStart, xStop, dtype=float)
 for i in range(iterations):
-    xcMap = unmap(crMap, xMap)
-    rLayers[:, i] = useMap(cImage, xcMap)
     mask = xMap >= crMap[..., :1]
-    rLayers[:, i] *= mask
-    magnitudes += mask * rLayerWeights[i]
-    xMap = useMap(clMap, xcMap)
+    xMap = unmap(crMap, xMap)
+    weights = useMap(cScores, xMap)
+    weights *= mask
+    rLayers[:, i] = useMap(cImage, xMap)
+    rLayers[:, i] *= weights
+    magnitudes += weights
+    xMap = useMap(clMap, xMap)
 
-layers *= layerWeights[:, None, None]
 merged = np.sum(layers, axis=1)
 merged /= magnitudes
+merged += blurred
 imsave("gram{}.png".format(testCase), np.round(np.clip(np.moveaxis(merged, 0, 2), 0, 1) * 255).astype(np.uint8))
