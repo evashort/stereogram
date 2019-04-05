@@ -195,8 +195,8 @@ testCase = 5
 
 channels = readDepthFile("zmap{}.exr".format(testCase)).astype(float)
 _, height, cWidth = channels.shape
-height //= 2
-cWidth //= 2
+# height //= 2
+# cWidth //= 2
 unit = np.sqrt(height * cWidth) / 10
 print(unit)
 channels = np.moveaxis(
@@ -268,7 +268,7 @@ imsave("blurred{}.png".format(testCase), np.round(np.clip(np.moveaxis(blurred, 0
 
 cScores = np.mean(cImage, axis=0)
 cScores *= cScores
-cScores *= getGaussian(cWidth, sigmasInFrame=1.5)
+cScores *= getGaussian(cWidth, sigmasInFrame=2.5)
 cScores = ndimage.filters.gaussian_filter(cScores, sigma=0.13 * unit)
 np.power(cScores, 10, out=cScores)
 
