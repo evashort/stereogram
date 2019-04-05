@@ -214,6 +214,7 @@ np.minimum.accumulate( # pylint: disable=no-member
 _, xStop = getIntRange(crMap)
 
 width = xStop - xStart
+xMap = np.empty((height, width))
 
 cImage = channels[:3]
 cBlurred = np.empty_like(cImage)
@@ -223,24 +224,36 @@ for channel, blurredChannel in zip(cImage, cBlurred):
     )
 cImage -= cBlurred
 
-layerCount = 2
-blurred = np.zeros((cImage.shape[0], height, width))
-magnitudes = np.zeros((height, width))
-xMap = np.empty((height, width))
+bcImage = np.zeros((cImage.shape[0], height, width))
+bcMagnitudes = np.zeros((height, width))
+adImage = np.zeros((cImage.shape[0], height, width))
+adMagnitudes = np.zeros((height, width))
 
 xMap[:] = np.arange(xStart, xStop, dtype=float)
 mask = xMap < clMap[..., -1:]
 xMap = unmap(clMap, xMap)
-blurred += useMap(cBlurred, xMap) * mask
-magnitudes += mask
+bcImage += useMap(cBlurred, xMap) * mask
+bcMagnitudes += mask
+xMap = useMap(crMap, xMap)
+mask = xMap < clMap[..., -1:]
+xMap = unmap(clMap, xMap)
+adImage += useMap(cBlurred, xMap) * mask
+adMagnitudes += mask
 
 xMap[:] = np.arange(xStart, xStop, dtype=float)
 mask = xMap >= crMap[..., :1]
 xMap = unmap(crMap, xMap)
-blurred += useMap(cBlurred, xMap) * mask
-magnitudes += mask
+bcImage += useMap(cBlurred, xMap) * mask
+bcMagnitudes += mask
+xMap = useMap(clMap, xMap)
+mask = xMap >= crMap[..., :1]
+xMap = unmap(crMap, xMap)
+adImage += useMap(cBlurred, xMap) * mask
+adMagnitudes += mask
 
-blurred /= magnitudes
+bcImage /= bcMagnitudes
+adImage /= adMagnitudes
+blurred = 1.5 * bcImage - 0.5 * adImage
 imsave("blurred{}.png".format(testCase), np.round(np.clip(np.moveaxis(blurred, 0, 2), 0, 1) * 255).astype(np.uint8))
 
 cScores = np.mean(cImage, axis=0)
