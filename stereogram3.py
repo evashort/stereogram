@@ -93,13 +93,6 @@ def useMap(abMap, a):
     bj = multiGet(abMap, aj.astype(int))
     return bi * (aj - a) + bj * (a - ai)
 
-def useTiledMap(abMap, a):
-    ai = np.floor(a)
-    aj = ai + 1
-    bi = multiGet(abMap, ai.astype(int) % abMap.shape[-1])
-    bj = multiGet(abMap, aj.astype(int) % abMap.shape[-1])
-    return bi * (aj - a) + bj * (a - ai)
-
 def unmap(abMap, b):
     b = np.clip(b, abMap[..., :1], abMap[..., -1:])
     aj = searchsorted(abMap, b, side="right")
@@ -127,22 +120,6 @@ assertEqual(
 assertEqual(
     unmap(np.array([[0, 1], [2, 3]]), [[0.1], [2.9]]),
     [[0.1], [0.9]]
-)
-
-def getIntRange(abMap):
-    return (
-        int(np.ceil(np.max(abMap[..., 0]))),
-        int(np.ceil(np.min(abMap[..., -1]))) - 1
-    )
-
-def isIncreasing(curve, testPoints):
-    testIndices = np.floor(testPoints).astype(int)
-    assert np.all(testIndices >= 0)
-    return multiGet(curve, testIndices) < multiGet(curve, testIndices + 1)
-
-assert np.all(
-    isIncreasing([[0, 0, 1], [0, 1, 1]], [0.5, 1.5]) == \
-        [[False, True], [True, False]]
 )
 
 def readDepthFile(path, channelNames="RGBZ"):
@@ -205,24 +182,33 @@ channels = np.moveaxis(
         (height, cWidth)
     ), 2, 0
 )
-radii = channels[-1]
-adjustRange(radii, np.min(radii), np.max(radii), 0.726 * unit, 0.804 * unit, out=radii)
+cRadii = channels[-1]
+adjustRange(cRadii, np.min(cRadii), np.max(cRadii), 0.726 * unit, 0.804 * unit, out=cRadii)
 
-cOrigin = 0.5 * (cWidth - 1)
-cxMap = np.arange(cWidth) - cOrigin
+cStart = int(np.floor(np.min(cRadii[:, 0])))
+width = cStart + cWidth - 1 + int(np.ceil(np.min(cRadii[:, -1])))
 
-clMap = cxMap - radii
+clMap = np.arange(cStart, cStart + cWidth) - cRadii
 np.maximum.accumulate(clMap, axis=1, out=clMap) # pylint: disable=no-member
-xStart, _ = getIntRange(clMap)
+lcMap = unmap(clMap, np.arange(width))
+mask = np.arange(width) >= clMap[:, -1:]
+del clMap
+lRadii = useMap(cRadii, lcMap)
+del lcMap
+lRadii[mask] = 0
+del mask
 
-crMap = cxMap + radii
+crMap = np.arange(cStart, cStart + cWidth) + cRadii
 np.minimum.accumulate( # pylint: disable=no-member
     crMap[:, ::-1], axis=1, out=crMap[:, ::-1]
 )
-_, xStop = getIntRange(crMap)
-
-width = xStop - xStart
-xMap = np.empty((height, width))
+rcMap = unmap(crMap, np.arange(width))
+mask = np.arange(width) < crMap[:, :1]
+del crMap
+rRadii = useMap(cRadii, rcMap)
+del rcMap
+rRadii[mask] = 0
+del mask
 
 cImage = channels[:3]
 np.clip(cImage, 0, 1, out=cImage)
@@ -239,27 +225,39 @@ bcMagnitudes = np.zeros((height, width))
 adImage = np.zeros((cImage.shape[0], height, width))
 adMagnitudes = np.zeros((height, width))
 
-xMap[:] = np.arange(xStart, xStop, dtype=float)
-mask = xMap < clMap[..., -1:]
-xMap = unmap(clMap, xMap)
-bcImage += useMap(cBlurred, xMap) * mask
-bcMagnitudes += mask
-xMap = useMap(crMap, xMap)
-mask = xMap < clMap[..., -1:]
-xMap = unmap(clMap, xMap)
-adImage += useMap(cBlurred, xMap) * mask
-adMagnitudes += mask
+lrMap = np.arange(width) + 2 * lRadii
+lcMap = np.arange(-cStart, width - cStart) + lRadii
+lcMask = lcMap < cWidth - 1
+np.logical_and(lcMask, lRadii, out=lcMask)
+bcImage += useMap(cBlurred, lcMap) * lcMask
+bcMagnitudes += lcMask
+radii = useMap(lRadii, lrMap)
+lrMap += radii
+lcMap = lrMap - cStart
+del lrMap
+lcMask = lcMap < cWidth - 1
+np.logical_and(lcMask, radii, out=lcMask)
+adImage += useMap(cBlurred, lcMap) * lcMask
+adMagnitudes += lcMask
+del lcMap
+del lcMask
 
-xMap[:] = np.arange(xStart, xStop, dtype=float)
-mask = xMap >= crMap[..., :1]
-xMap = unmap(crMap, xMap)
-bcImage += useMap(cBlurred, xMap) * mask
-bcMagnitudes += mask
-xMap = useMap(clMap, xMap)
-mask = xMap >= crMap[..., :1]
-xMap = unmap(crMap, xMap)
-adImage += useMap(cBlurred, xMap) * mask
-adMagnitudes += mask
+rlMap = np.arange(width) - 2 * rRadii
+rcMap = np.arange(-cStart, width - cStart) - rRadii
+rcMask = rcMap >= 0
+np.logical_and(rcMask, rRadii, out=rcMask)
+bcImage += useMap(cBlurred, rcMap) * rcMask
+bcMagnitudes += rcMask
+radii = useMap(rRadii, rlMap)
+rlMap -= radii
+rcMap = rlMap - cStart
+del rlMap
+rcMask = rcMap >= 0
+np.logical_and(rcMask, radii, out=rcMask)
+adImage += useMap(cBlurred, rcMap) * rcMask
+adMagnitudes += rcMask
+del rcMap
+del rcMask
 
 bcImage /= bcMagnitudes
 adImage /= adMagnitudes
@@ -278,25 +276,31 @@ iterations = 8
 layerCount = 2 * iterations
 merged = np.zeros((cImage.shape[0], height, width))
 
-xMap[:] = np.arange(xStart, xStop, dtype=float)
+lrMap = np.broadcast_to(np.arange(width), (height, width)).astype(float)
 for i in range(iterations):
-    mask = xMap < clMap[..., -1:]
-    xMap = unmap(clMap, xMap)
-    weights = useMap(cScores, xMap)
-    weights *= mask
-    merged += useMap(cImage, xMap) * weights
+    radii = useMap(lRadii, lrMap)
+    lrMap += radii
+    lcMap = lrMap - cStart
+    lrMap += radii
+    lcMask = lcMap < cWidth - 1
+    np.logical_and(lcMask, radii, out=lcMask)
+    weights = useMap(cScores, lcMap)
+    weights *= lcMask
+    merged += useMap(cImage, lcMap) * weights
     magnitudes += weights
-    xMap = useMap(crMap, xMap)
 
-xMap[:] = np.arange(xStart, xStop, dtype=float)
+rlMap = np.broadcast_to(np.arange(width), (height, width)).astype(float)
 for i in range(iterations):
-    mask = xMap >= crMap[..., :1]
-    xMap = unmap(crMap, xMap)
-    weights = useMap(cScores, xMap)
-    weights *= mask
-    merged += useMap(cImage, xMap) * weights
+    radii = useMap(rRadii, rlMap)
+    rlMap -= radii
+    rcMap = rlMap - cStart
+    rlMap -= radii
+    rcMask = rcMap >= 0
+    np.logical_and(rcMask, radii, out=rcMask)
+    weights = useMap(cScores, rcMap)
+    weights *= rcMask
+    merged += useMap(cImage, rcMap) * weights
     magnitudes += weights
-    xMap = useMap(clMap, xMap)
 
 merged /= magnitudes
 merged += blurred
