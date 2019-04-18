@@ -191,24 +191,18 @@ width = cStart + cWidth - 1 + int(np.ceil(np.min(cRadii[:, -1])))
 clMap = np.arange(cStart, cStart + cWidth) - cRadii
 np.maximum.accumulate(clMap, axis=1, out=clMap) # pylint: disable=no-member
 lcMap = unmap(clMap, np.arange(width))
-mask = np.arange(width) >= clMap[:, -1:]
 del clMap
 lRadii = useMap(cRadii, lcMap)
 del lcMap
-lRadii[mask] = 0
-del mask
 
 crMap = np.arange(cStart, cStart + cWidth) + cRadii
 np.minimum.accumulate( # pylint: disable=no-member
     crMap[:, ::-1], axis=1, out=crMap[:, ::-1]
 )
 rcMap = unmap(crMap, np.arange(width))
-mask = np.arange(width) < crMap[:, :1]
 del crMap
 rRadii = useMap(cRadii, rcMap)
 del rcMap
-rRadii[mask] = 0
-del mask
 
 cImage = channels[:3]
 np.clip(cImage, 0, 1, out=cImage)
@@ -228,7 +222,6 @@ adMagnitudes = np.zeros((height, width))
 lrMap = np.arange(width) + 2 * lRadii
 lcMap = np.arange(-cStart, width - cStart) + lRadii
 lcMask = lcMap < cWidth - 1
-np.logical_and(lcMask, lRadii, out=lcMask)
 bcImage += useMap(cBlurred, lcMap) * lcMask
 bcMagnitudes += lcMask
 radii = useMap(lRadii, lrMap)
@@ -236,7 +229,6 @@ lrMap += radii
 lcMap = lrMap - cStart
 del lrMap
 lcMask = lcMap < cWidth - 1
-np.logical_and(lcMask, radii, out=lcMask)
 adImage += useMap(cBlurred, lcMap) * lcMask
 adMagnitudes += lcMask
 del lcMap
@@ -245,7 +237,6 @@ del lcMask
 rlMap = np.arange(width) - 2 * rRadii
 rcMap = np.arange(-cStart, width - cStart) - rRadii
 rcMask = rcMap >= 0
-np.logical_and(rcMask, rRadii, out=rcMask)
 bcImage += useMap(cBlurred, rcMap) * rcMask
 bcMagnitudes += rcMask
 radii = useMap(rRadii, rlMap)
@@ -253,7 +244,6 @@ rlMap -= radii
 rcMap = rlMap - cStart
 del rlMap
 rcMask = rcMap >= 0
-np.logical_and(rcMask, radii, out=rcMask)
 adImage += useMap(cBlurred, rcMap) * rcMask
 adMagnitudes += rcMask
 del rcMap
@@ -283,7 +273,6 @@ for i in range(iterations):
     lcMap = lrMap - cStart
     lrMap += radii
     lcMask = lcMap < cWidth - 1
-    np.logical_and(lcMask, radii, out=lcMask)
     weights = useMap(cScores, lcMap)
     weights *= lcMask
     merged += useMap(cImage, lcMap) * weights
@@ -296,7 +285,6 @@ for i in range(iterations):
     rcMap = rlMap - cStart
     rlMap -= radii
     rcMask = rcMap >= 0
-    np.logical_and(rcMask, radii, out=rcMask)
     weights = useMap(cScores, rcMap)
     weights *= rcMask
     merged += useMap(cImage, rcMap) * weights
