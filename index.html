@@ -10,7 +10,7 @@
         canvas.width = 600;
         canvas.height = 400;
         document.body.appendChild(canvas);
-        var gl = canvas.getContext("webgl");
+        gl = canvas.getContext("webgl");
 
         var shaderProgram = gl.createProgram();
         var vertexShader = gl.createShader(gl.VERTEX_SHADER);
@@ -35,12 +35,16 @@
         gl.attachShader(shaderProgram, vertexShader);
         var fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
         gl.shaderSource(fragmentShader, `
-          varying highp vec2 vTextureCoord;
+          precision highp float;
+          varying vec2 vTextureCoord;
 
           uniform sampler2D uSampler;
+          uniform sampler2D depthMap;
 
           void main(void) {
-            gl_FragColor = texture2D(uSampler, vTextureCoord);
+            float shift = texture2D(depthMap, vTextureCoord).a;
+            vec2 shiftedCoord = vTextureCoord + vec2(0.0, shift);
+            gl_FragColor = texture2D(uSampler, shiftedCoord);
           }
         `);
         gl.compileShader(fragmentShader);
@@ -87,7 +91,39 @@
         gl.uniform1i(
           gl.getUniformLocation(shaderProgram, 'uSampler'),
           0 // texture unit 0
-        )
+        );
+
+        gl.getExtension("OES_texture_float");
+        gl.getExtension("OES_texture_float_linear");
+
+        depthMap = new Float32Array(canvas.width * canvas.height);
+        for (var x = 170; x < 250; x++) {
+          for (var y = 50; y < 185; y++) {
+            depthMap[y * canvas.width + x] = 0.01;
+          }
+        }
+
+        gl.activeTexture(gl.TEXTURE1); // texture unit 1
+        gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0, // level
+          gl.ALPHA, // internalFormat
+          canvas.width,
+          canvas.height,
+          0, // border
+          gl.ALPHA, // srcFormat
+          gl.FLOAT, // srcType
+          depthMap
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.uniform1i(
+          gl.getUniformLocation(shaderProgram, 'depthMap'),
+          1 // texture unit 1
+        );
+
         gl.drawArrays(
           gl.TRIANGLE_STRIP,
           0, // first
