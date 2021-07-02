@@ -3,7 +3,7 @@ from itertools import islice, product
 from scipy import ndimage
 import numpy as np
 import OpenEXR # non-Windows: pip install openexr; Windows: https://www.lfd.uci.edu/~gohlke/pythonlibs/#openexr
-import skimage # pip install scikit-image
+import skimage.transform # pip install scikit-image
 
 def assertEqual(a, b, threshold=1e-6, limit=3):
     a, b = np.broadcast_arrays(a, b)
