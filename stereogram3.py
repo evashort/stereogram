@@ -122,12 +122,12 @@ assertEqual(
     [[0.1], [0.9]]
 )
 
-def readDepthFile(path, channelNames="RGBZ"):
+def readDepthFile(path, channelNames="RGBAZ"):
+    dataTypes = {1: np.float16, 2: np.float32}
     depthFile = OpenEXR.InputFile(str(path))
     header = depthFile.header()
     for channelName in channelNames:
         channelHeader = header["channels"][channelName]
-        assert channelHeader.type.v == 2 # float32
         assert (channelHeader.xSampling, channelHeader.ySampling) == (1, 1)
 
     viewBox = header["dataWindow"]
@@ -136,18 +136,20 @@ def readDepthFile(path, channelNames="RGBZ"):
 
     channels = np.empty((len(channelNames), height, width))
     for i, channelName in enumerate(channelNames):
+        dtype = dataTypes[header["channels"][channelName].type.v]
         buffer = depthFile.channel(channelName)
-        assert len(buffer) == height * width * np.dtype(np.float32).itemsize
-        channels[i] = np.frombuffer(buffer, dtype=np.float32).reshape(
+        assert len(buffer) == height * width * np.dtype(dtype).itemsize
+        channels[i] = np.frombuffer(buffer, dtype=dtype).reshape(
             (height, width)
         )
 
-    if channelNames[:3] == "RGB":
-        image = np.moveaxis(channels[:3], 0, 2)
-        image *= 0.8
-        image **= 0.5
+    if channelNames[:4] == "RGBA":
+        np.maximum(channels[:3], 0, out=channels[:3])
+        # channels[:3] *= 0.8
+        channels[:3] **= 0.5
+        image = np.moveaxis(channels[:4], 0, 2)
         imsave(str(path) + ".png", np.round(np.clip(image, 0, 1) * 255).astype(np.uint8))
-    
+
     if channelNames[-1] == "Z":
         depthMap = channels[-1]
         imsave(str(path) + ".z.png", np.round((depthMap - np.max(depthMap)) / (np.min(depthMap) - np.max(depthMap)) * 255).astype(np.uint8))
@@ -168,9 +170,9 @@ def getGaussian(length, sigmasInFrame=3):
     x *= sigmasInFrame / (0.5 * length * np.sqrt(2 * np.pi))
     return x
 
-testCase = 5
+testCase = 6
 
-channels = readDepthFile("zmap{}.exr".format(testCase)).astype(float)
+channels = readDepthFile("cake alpha.exr".format(testCase)).astype(float)
 _, height, cWidth = channels.shape
 # height //= 2
 # cWidth //= 2
@@ -191,7 +193,7 @@ width = cStart + cWidth - 1 + int(np.ceil(np.min(cRadii[:, -1])))
 clMap = np.arange(cStart, cStart + cWidth) - cRadii
 np.maximum.accumulate(clMap, axis=1, out=clMap) # pylint: disable=no-member
 lcMap = unmap(clMap, np.arange(width))
-del clMap
+#del clMap
 lRadii = useMap(cRadii, lcMap)
 del lcMap
 
@@ -200,23 +202,39 @@ np.minimum.accumulate( # pylint: disable=no-member
     crMap[:, ::-1], axis=1, out=crMap[:, ::-1]
 )
 rcMap = unmap(crMap, np.arange(width))
-del crMap
+#del crMap
 rRadii = useMap(cRadii, rcMap)
 del rcMap
 
-cImage = channels[:3]
+cImage = channels[:4]
+cImage[:3] *= cImage[3]
 np.clip(cImage, 0, 1, out=cImage)
 cBlurred = np.empty_like(cImage)
 for channel, blurredChannel in zip(cImage, cBlurred):
     ndimage.filters.gaussian_filter(
-        channel, sigma=0.05 * unit, output=blurredChannel
+        channel, sigma=0.04 * unit, output=blurredChannel
     )
-cImage -= cBlurred
-adjustRange(cBlurred, 0, 1, 0.15, 0.8, out=cBlurred)
+background = imread("gram7.png").astype(float)
+background /= 255
+background = np.moveaxis(background, 2, 0)
+cBackground = useMap(background, clMap)
+del clMap
+cBackground[:cWidth // 2] = useMap(background, crMap)[:cWidth // 2]
+del crMap
+imsave("cBackground.png".format(testCase), np.round(np.clip(np.moveaxis(cBackground, 0, 2), 0, 1) * 255).astype(np.uint8))
 
-bcImage = np.zeros((cImage.shape[0], height, width))
+cImage[:3] += cBackground
+cImage[:3] -= cBackground * cImage[3]
+cImage = cImage[:3]
+cImage -= cBlurred[:3] + cBackground - cBackground * cBlurred[3]
+cBlurred[:3] /= cBlurred[3]
+np.nan_to_num(cBlurred, copy=False, nan=0, posinf=0, neginf=0)
+adjustRange(cBlurred[:3], 0, 1, 0.15, 0.8, out=cBlurred[:3])
+cBlurred[:3] *= cBlurred[3]
+
+bcImage = np.zeros((cBlurred.shape[0], height, width))
 bcMagnitudes = np.zeros((height, width))
-adImage = np.zeros((cImage.shape[0], height, width))
+adImage = np.zeros((cBlurred.shape[0], height, width))
 adMagnitudes = np.zeros((height, width))
 
 lrMap = np.arange(width) + 2 * lRadii
@@ -252,7 +270,10 @@ del rcMask
 bcImage /= bcMagnitudes
 adImage /= adMagnitudes
 blurred = 1.5 * bcImage - 0.5 * adImage
-imsave("blurred{}.png".format(testCase), np.round(np.clip(np.moveaxis(blurred, 0, 2), 0, 1) * 255).astype(np.uint8))
+blurred2 = blurred.copy()
+blurred2[:3] /= blurred2[3]
+np.nan_to_num(blurred2, copy=False, nan=0, posinf=0, neginf=0)
+imsave("blurred{}.png".format(testCase), np.round(np.clip(np.moveaxis(blurred2, 0, 2), 0, 1) * 255).astype(np.uint8))
 
 cScores = np.mean(cImage, axis=0)
 cScores *= cScores
@@ -264,7 +285,7 @@ magnitudes = np.zeros((height, width))
 
 iterations = 8
 layerCount = 2 * iterations
-merged = np.zeros((cImage.shape[0], height, width))
+merged = np.zeros((cBlurred.shape[0], height, width))
 
 lrMap = np.broadcast_to(np.arange(width), (height, width)).astype(float)
 for i in range(iterations):
@@ -275,7 +296,7 @@ for i in range(iterations):
     lcMask = lcMap < cWidth - 1
     weights = useMap(cScores, lcMap)
     weights *= lcMask
-    merged += useMap(cImage, lcMap) * weights
+    merged[:3] += useMap(cImage, lcMap) * weights
     magnitudes += weights
 
 rlMap = np.broadcast_to(np.arange(width), (height, width)).astype(float)
@@ -287,9 +308,15 @@ for i in range(iterations):
     rcMask = rcMap >= 0
     weights = useMap(cScores, rcMap)
     weights *= rcMask
-    merged += useMap(cImage, rcMap) * weights
+    merged[:3] += useMap(cImage, rcMap) * weights
     magnitudes += weights
 
 merged /= magnitudes
+np.nan_to_num(merged, copy=False, nan=0, posinf=0, neginf=0)
 merged += blurred
+merged[:3] += background
+merged[:3] -= background * merged[3]
+merged[3] = 1
+merged[:3] /= merged[3]
+np.nan_to_num(merged, copy=False, nan=0, posinf=0, neginf=0)
 imsave("gram{}.png".format(testCase), np.round(np.clip(np.moveaxis(merged, 0, 2), 0, 1) * 255).astype(np.uint8))
